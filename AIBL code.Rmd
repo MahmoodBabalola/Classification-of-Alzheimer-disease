@@ -1,0 +1,534 @@
+---
+title: "AIBL ML Analysis"
+author: "Babalola Mahmood
+output:
+  html_document: default
+  word_document: default
+  pdf_document: default
+---
+
+
+```{r}
+#Read the data files.
+
+neurobat<-read.csv("aibl_neurobat_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+
+pdxconv<-read.csv("aibl_pdxconv_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+
+mmse<-read.csv("aibl_mmse_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+cdr<- read.csv("aibl_cdr_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+labdata<-read.csv("aibl_labdata_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+apoeres<-read.csv("aibl_apoeres_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+medhist<-read.csv("aibl_medhist_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+ptdemog<-read.csv("aibl_ptdemog_01-Jun-2018.csv", stringsAsFactors = FALSE)
+
+
+```
+
+```{r}
+
+#Bringing the files together
+
+library("dplyr")
+
+#Merge the datasets with 1688 observation.
+aibl_total<-cdr%>%
+
+  inner_join(labdata)%>%
+  inner_join(mmse)%>%
+  inner_join(neurobat)%>%
+  inner_join(pdxconv,by=c("RID"="RID","SITEID"="SITEID","VISCODE"="VISCODE"))
+
+
+#Merge the datasets with 868 observations only. These remain fixed for the all the trials  over the testing period. 
+
+#Remove SITEID and VISCODE, as these are not relevant, because these variables remain fixed for all the participants.
+medhist1<-medhist[,c(-2,-3)]
+apoeres1<-apoeres[,c(-2,-3)]
+ptdemog1<-ptdemog[,c(-2,-3)]
+
+#Merge with the key RID only.
+ aibl_total<-aibl_total%>%
+  left_join(medhist1)%>%
+  left_join(apoeres1)%>%
+  left_join(ptdemog1,by=c("RID"="RID"))
+
+head (aibl_total)
+
+head(arrange(aibl_total, RID))
+
+str (aibl_total)
+
+sapply(aibl_total, class) # UNDERSTAND CLASS
+dim(aibl_total) # checking the dimensions of the dataframe
+names(aibl_total) #list of variable names
+table(aibl_total$DXCURREN)
+
+bldat <- aibl_total[aibl_total$VISCODE=='bl', ] #subset the data at baseline (BL) 
+# aibl_total_m18 <- aibl_total[aibl_total$VISCODE=='m18', ]
+ 
+write.csv(bldat, file = "BL_dat") #export the new data as a csv file
+
+
+ 
+```
+DATA CLEANING
+
+```{r}
+glimpse(bldat) #get a glimpse of the data
+
+str(bldat)# check for the structure of the data #862 obs. of  36 variables
+summary(bldat)
+
+table(bldat$SITEID) # we have 571 in the first site(Melbourne, Victoria) and 291 in the second site (Perth in Western Australia)
+
+bldat$PTDOB <- gsub("[[:punct:]]", "", bldat$PTDOB) # Remove the backslash from the PTDOB(patient Date of birth) column so it can be usable.
+bldat$PTDOB <- as.numeric(bldat$PTDOB) #transform the PTDOB to numeric from character
+
+bldat$DOB <- 2006 - bldat$PTDOB # Create another variable called DOB(Date of birth) by Subtracting the patients year of birth from 2006 because The experiment was Launched on (November 2006).
+
+#categorize the MMScore column into 4 categories: may be normal (30-25) = 4, mild/early (24-21) = 3, moderate (20-10) = 2, and severe (9-0) = 1
+
+library(data.table)
+setDT(bldat)
+
+bldat[,MMscore:=cut(MMSCORE,
+                        breaks=c(0,9,20,24,Inf),
+                        include.lowest=TRUE,
+                        labels=c("1","2","3","4"))]
+
+
+bldat[,table(MMscore)]
+
+```
+
+According to the dataset description, the right amount of columns is 31, 30 features and 1 output label.
+
+-- RID: RID is used as a primary key to combine the dataset so it is not needed in the analysis so it was removed
+
+-- VISCODE: Since the new data we have now is BL alone, the column VISCODE can be deleted
+
+-- SITEID: the data was collected in two location, Perth in Western Australia (40%) and 60% from Melbourne, Victoria. The site ID is just an identification of where the data was collected so it is not needed and removed. but before removal, it is necessary to descrive the data using it. In our final data, we have 571 in the first site (1) and 291 in the second site (2)
+
+-- APTESTDT: APTESTDT is the date in which their blood is collected and their allele genotype determined so it is not needed in the data.
+
+-- EXAMDATE: EXAMDATE is not needed because it is the day each patiennt took the Cognitive assessments
+
+-- the patients age as at when the study started (baseline) has been calculated by deducting PTDOB from 2006, so PTDOB is no longer needed in the data
+
+-- The dimension of the data now comforms to 31 columns
+```{r}
+
+bldat = subset(bldat, select = -c(RID, SITEID, VISCODE, EXAMDATE, PTDOB, APTESTDT, MMSCORE) ) #drop the Unneeded columns
+
+str(bldat) #862 obs. of  31 variables
+
+```
+
+
+Data Exploration and Visualization
+
+```{r}
+summary(bldat) # from the summary, we can see that most of the variable has -4 as their minimum which seems like a noise in the data so we inspect further using boxplot
+
+boxplot(bldat) # looks rough and unrepresentative so we inspect each variable
+
+```
+
+
+
+AXT117
+```{r}
+
+boxplot(bldat$AXT117,ylab = "AXT117") #boxplot of AXT117
+
+boxplot.stats(bldat$AXT117)$out #checking the exact location of the outlier--
+
+bldat[order(bldat$AXT117),] #by ordering the whole data in ascending order using AXT117 variable, we can see that the -4 ranges across most of the columns so we drop all the rows involved.
+
+bldat <- subset(bldat, AXT117 != -4) #-4 is an outlier in thyroid stim. Hormone so we have to remove the rows that contains -4
+
+#we consider HC and Non-HC. Non-HC is acheived by combining MCI and AD)
+bldat$DXCURREN[bldat$DXCURREN == 3] <- 2
+bldat$DXCURREN[bldat$DXCURREN == 7] <- NA #replace 7 with NA
+
+
+
+
+summary(bldat)#857obs. to 800 obs.
+
+
+```
+
+by exploring the data, we can see that -4 is a place holder for missing values in the data so we replace all -4 in the data with NA
+
+
+Replacing all -4s in the data as NA
+
+```{r}
+library(DataExplorer)
+library(mice)
+
+bldat_miss = replace(bldat, bldat == -4, NA)
+
+
+plot_intro(bldat_miss)
+plot_bar(bldat_miss) #visualize missing data for the categorical columns
+
+
+md.pattern(bldat_miss) #visualizing the locations of the missing values
+
+
+#investigate more because MH16SMOK stands out
+
+sum(is.na(bldat_miss$MH16SMOK)) #292 missing values in smoking alone
+sum(is.na(bldat_miss$LIMMTOTAL))
+sum(is.na(bldat_miss$LDELTOTAL))
+summary(bldat_miss)
+
+```
+
+```{r}
+
+#### CONVERTING categorical columns from numeric to categorical 
+library(dplyr)
+
+
+bldat_miss<- bldat_miss %>% mutate(across(c(DXCURREN, MHPSYCH, MH2NEURL, MH4CARD , MH6HEPAT, MH8MUSCL, MH9ENDO, MH10GAST, MH12RENA, MH16SMOK, MH17MALI , APGEN1, APGEN2, PTGENDER, CDGLOBAL), factor))
+
+
+str(bldat_miss)
+
+```
+
+
+```{r}
+## Using random forest imputation algorithm from the missForest package to impute all missing values because the data is of unequal scales
+set.seed(112)
+library(missForest)
+imp.dat <- missForest(bldat_miss, verbose = TRUE)
+
+names(imp.dat)
+imp.dat$OOBerror #the normalized root mean squared error (NRMSE) is 0.468
+
+BLdat<- imp.dat$ximp
+table(is.na(BLdat)) #count the number of NA
+summary(BLdat)
+str(BLdat)
+#write.csv(BLdat, file = "BLdat")
+
+
+```
+
+
+Exploring the newly completed data
+```{r}
+
+boxplot(BLdat)
+
+```
+
+thyroid stim. Hormone (AXT117) normal values is between 0.4 to 4 but extreme values like 12 is possible
+
+
+BAT126 having values up to 2033 will be left alone. Though the normal range for vitamin B12 (total) is between 200  per  1100 ng per L (nanograms per liter), 200  per  1100 pg per mL (picograms per milliliter) but extreme levels like that is possible.
+
+
+red blood cell (HMT3), A normal range in adults is generally considered to be 4.35 to 5.65 million red blood cells and values like 5.8 is possible.
+
+
+white blood cell (HMT7) The normal number of WBCs in the blood is 4,500 to 11,000 WBCs per microliter (4.5 to 11.0  109 per L) and extreme value like 14.5 is possible.
+
+
+platelets (HMT13) A normal platelet count ranges from 150 to 450 platelets per microliter of blood but extreme values up to 556 is possible and extreme low values like 13 is also possible.
+
+
+haemoglobin (HMT40) A hemoglobin level of less than 5.0 grams per deciliter (g per dl) is possible, though dangerous and could lead to heart failure or death. A normal hemoglobin level is 13.2 per 16.6 grams per deciliter (g per dL) for males and 11.6 per 15 g per dL for females
+
+
+mean corpuscular haemoglobin (HMT100) Normal MCH levels are around 27 to 33 picograms (pg) per cell in adults. extreme low values like 21 is possible
+
+
+mean corpuscular haemoglobin concentration (HMT102) The reference range for MCHC in adults is 33.4 per 35.5 grams per deciliter (g per dL). If your MCHC value is below 33.4 grams per deciliter, you have low MCHC.
+
+
+urea nitrogen (RCT6) In general, around 6 to 24 mg per dL (2.1 to 8.5 mmol per L ) is considered normal
+
+
+serum glucose (RCT11) A blood sugar level less than 140 mg per dL (7.8 mmol per L) is normal, but extreme values like 234 is possible 
+
+
+cholesterol (high performance) (RCT120) Less than 200 is good (but the lower the better), Less than 100; below 70 if coronary artery disease is present. 240 or higher value is possible.
+
+
+creatinine (rate blanked) (RCT329)  normal level is 0.7 to 1.3 mg per dL, but extreme values like 1.9 is possible
+
+
+MMSCORE: mini per mental state exam (MMSE) can take values between 0 and 30, so 6 is not an outlier
+
+
+LIMMTOTAL and  LDELTOTAL: logical memory immediate recall (LMIR) and logical memory elayed recall (LMDR) can take values between 0 to 25, so 23 is not an outlier
+
+The categorical variables are right with no outliers.
+
+
+
+
+```{r}
+#we consider HC and Non-HC. Non-HC in the output label
+
+table(BLdat$DXCURREN) ## HC(1) is 575  and Non-HC(2) is 225 
+
+## Visualizing the class.
+barplot(prop.table(table(BLdat$DXCURREN)),
+        col = rainbow(2),
+        main = "Class Distribution")
+
+
+```
+
+
+
+We have to balance the Data, To do that we use Synthetic Minority Over-sampling Technique (SMOTE) in the Smotefamily package
+```{r}
+
+## now using SMOTE to create a more "balanced problem"
+library(smotefamily)
+
+## SMOTE only works on numerical data so we convert the variable to numeric
+x <- BLdat #create a new variable for the data to be numeric
+x <- sapply(x, as.numeric) #turn the whole data to numeric
+
+x <- as.data.frame(x) #turn the data to a dataframe from list
+str(x)
+
+xdat <-  SMOTE(x, x$DXCURREN, K = 5, dup_size = 1) #apply the SMOTE to balance the data
+
+xxdat <- xdat$data #subset the right data out of the result
+
+table(xxdat$DXCURREN)
+barplot(prop.table(table(xxdat$DXCURREN)),
+        col = rainbow(2),
+        main = "Class Distribution")
+
+xxdat <- xxdat[,-32] #remove the last variable added to the data
+
+
+# we now have a more balanced class with HC = 575 and Non-HC = 450
+```
+
+
+
+Study correlations among the variables in the data, so as to decide on the data that goes into the model.
+
+```{r}
+library(corrplot)
+str(xxdat)
+table(xxdat$DXCURREN)
+
+
+corr <- cor(xxdat)
+View(corr) #view the correlation output
+corrplot(corr, number.cex = .9, method = "circle", type = "full", tl.cex=0.8,tl.col = "black") #Using the correlation plot find out the predictor variables that are strongly correlated
+
+
+subset(as.data.frame.table(abs(corr)), Freq < 1 & Freq > 0.8) #subset the correlation greater than 0.8 out
+
+#LDELTOTAL and LIMMTOTAL are strongly correlated so one of ot has tobe removed
+#HMT3 and HMT40 are highly correlated so one of the variable will be removed
+#CDGLOBAL and DXCURREN are highly correlated but we cannot remove any of ot from the data
+
+sum(is.na(bldat_miss$LIMMTOTAL)) #check the number of NA in LIMMTOTAL from the initial data
+sum(is.na(bldat_miss$LDELTOTAL)) #check the number of NA in LDELTOTAL from the initial 
+sum(is.na(bldat_miss$HMT3)) #check the number of NA in HMT3 from the initial 
+sum(is.na(bldat_miss$HMT40)) #check the number of NA in HMT40 from the initial 
+#HMT3 and HMT40 has the same number of missing value, so any of them can be deleted.
+
+xxdat <- xxdat[,-c(4,15)] #remove LDELTOTAL because it has higher missing value from the intial data and remove HMT3
+
+str(xxdat)
+# Convert the variables appropriatly.
+
+```
+
+Spliting the dataset into the Training set and Test set
+```{r}
+
+str(xxdat) #1025 obs. of  29 variables
+ 
+xxdat$DXCURREN = as.factor(xxdat$DXCURREN) #set the output variable to factor type.
+# Split the dataset into the Training set and Test set
+
+library(caTools)
+set.seed(123)
+split = sample.split(xxdat$DXCURREN, SplitRatio = 0.8)
+train_dat = subset(xxdat, split == TRUE)
+str(train_dat) #820 obs. of  29 variables
+table(train_dat$DXCURREN) #HC is 460 and Non-HC is 360
+
+test_dat = subset(xxdat, split == FALSE)
+str(test_dat) #205 obs. of  29 variables
+table(test_dat$DXCURREN) #HC is 115 and Non-HC is 90
+```
+
+
+Feature selection and Variable importance using Boruta Algorithm
+
+```{r }
+
+#Let us now apply the feature selection algorithm Boruta.
+library("Boruta")
+set.seed(123)
+Boruta.dat <- Boruta(DXCURREN ~ ., data = train_dat, doTrace = 2, ntree = 500)
+
+#Plot the importance of the attributes.
+plot(Boruta.dat)
+#One can see that Z score of the most important shadow attribute clearly separates important and non important attributes.
+
+#Confirming the tentative attributes, if some remained tentative in the initial round.
+Boruta.dat.final<-TentativeRoughFix(Boruta.dat)
+
+jpeg('SV.jpg')  #export the selected variablle plot as picture
+plot(Boruta.dat.final)
+dev.off()
+
+print(Boruta.dat.final)
+attStats(Boruta.dat.final)
+
+
+
+
+#Accounting for the first attribute as response variable, extract the selected or confirmed features.
+sfeat <- c(1, 3, 4, 6, 8, 11:19, 20:29) #the selectec features
+names(test_dat)
+data.sf <- train_dat[,sfeat]
+str(data.sf)
+
+train_data_select = data.sf
+test_data_select<-test_dat[,sfeat]
+
+#train_data_select = train data
+#test_data_select = test data
+```
+Training Naive Bayes Model
+
+```{r}
+library(e1071)
+library(caTools)
+library(caret)
+
+
+# Fitting Naive Bayes Model
+# to training dataset
+set.seed(120)  # Setting Seed
+classifier_cl <- naiveBayes(DXCURREN ~ ., data = train_data_select)
+classifier_cl
+ 
+# Predicting on test data'
+y_pred_nb <- predict(classifier_cl, newdata = test_data_select)
+ 
+# Confusion Matrix
+cm_nb <- table(test_data_select$DXCURREN, y_pred_nb)
+cm_nb
+ 
+# Model Evaluation
+confusionMatrix(cm_nb, mode = "everything")
+
+```
+
+Training Random Forest Model
+
+```{r}
+library(randomForest)
+
+set.seed(71) 
+mtry <- tuneRF(train_data_select[-9],train_data_select$DXCURREN, ntreeTry=500,
+               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+
+
+best.m <- mtry[mtry[, 2] == min(mtry[, 2]), 1] #finding the optimal value of mtry
+
+print(mtry)
+print(best.m)
+
+#Apply random forest (rf) with the optimal value of mtry.
+set.seed(71)
+rf <-randomForest(DXCURREN~.,data=train_data_select, mtry=best.m,importance=TRUE, ntree=500)
+print(rf)
+plot(rf)
+#In the rf plot, the red curve represents the Error for the class 0 and the green curve represents the Error for the class 1. The OOB error is represented by the black curve. 
+
+#variable importance
+importance(rf)
+varImpPlot(rf)
+
+#Predicting the Test set results.
+y_pred_rf <- predict(rf, newdata = test_data_select)
+
+
+library(MLmetrics)
+# Confusion Matrix
+cm_rf = table(test_data_select$DXCURREN, y_pred_rf)
+confusionMatrix(cm_rf, mode = "everything")
+
+
+#Predict and Calculate Performance Metrics.
+
+#Prediction and Calculate Performance Metrics
+pred1=predict(rf,newdata = test_data_select,type = "prob")
+
+library(ROCR)
+perf = prediction(pred1[,2], test_data_select$DXCURREN)
+
+# 0. Accuracy.
+acc = performance(perf, "acc")
+plot(acc,main="Accurcay Curve for Random Forest",col=2,lwd=2)
+
+# 1. Area under curve
+auc = performance(perf, "auc")
+auc@y.values[[1]]
+
+# 2. True Positive and Negative Rate
+pred3 = performance(perf, "tpr","fpr")
+
+# 3. Plot the ROC curve
+
+plot(pred3,main="ROC Curve for Random Forest",col=2,lwd=2)
+abline(a=0,b=1,lwd=2,lty=2,col="gray")
+
+
+
+
+```
+
+Training Support Vector Machine Model
+
+```{r}
+# Fitting SVM to the Training set
+
+library(e1071)
+
+classifier_svm = svm(formula = DXCURREN ~ .,
+				data = train_data_select,
+				type = 'C-classification',
+				kernel = 'linear')
+
+classifier_svm
+
+# Predicting the Test set results
+y_pred_svm = predict(classifier_svm, newdata = test_data_select[-9])
+
+# Making the Confusion Matrix
+cm_svm = table( y_pred_svm, test_data_select$DXCURREN)
+confusionMatrix(cm_svm, mode = "everything")
+
+```
+
+
